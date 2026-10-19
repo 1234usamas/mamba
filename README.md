@@ -47,7 +47,13 @@ under-crack-images/
 python train.py --config config.yaml
 ```
 
-The default configuration uses 512x512 images, batch size 8, AdamW, cosine annealing, up to 150 epochs, early stopping on validation clDice, a 12-epoch raster warmup, and TensorBoard logs. The best checkpoint is written to `runs/mamba_segmenter/best.pt`.
+The default configuration uses 512x512 images, batch size 8, AdamW, cosine annealing, up to 150 epochs, early stopping on validation clDice, a 12-epoch raster warmup, and TensorBoard logs. Each epoch prints loss, Dice, clDice, and Betti error for train and validation. These epoch metrics are also saved to `runs/mamba_segmenter/epoch_results.csv` and TensorBoard. The best checkpoint is written to `runs/mamba_segmenter/best.pt`.
+
+### Run on Google Colab GPU
+
+Open [`colab_train.ipynb`](colab_train.ipynb) in Google Colab, select a GPU runtime (**Runtime → Change runtime type → GPU**), and run the notebook cells from top to bottom. It clones this repository, installs the dependencies, extracts the included `under-crack-images.zip`, and trains using the GPU. Mounting Google Drive lets the notebook save checkpoints, epoch results, and evaluation outputs under `MyDrive/mamba_segmenter` so they remain available after the Colab session ends.
+
+The model automatically uses the available Mamba backend. If the optional `mamba-ssm` CUDA extension is unavailable, it uses the documented PyTorch fallback; TensorBoard records the backend used.
 
 Useful ablations:
 

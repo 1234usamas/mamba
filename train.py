@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from mamba_crack.data import make_loaders
 from mamba_crack.losses import TopologyLoss, cldice, soft_dice
-from mamba_crack.metrics import batch_metrics
+from mamba_crack.metrics import betti_numbers
 from mamba_crack.model import MambaSegmenter, parameter_count
 
 
@@ -53,7 +53,7 @@ def save_gallery(model, loader, device, path: Path, snake_scan: bool) -> None:
 
 def run_epoch(model, loader, criterion, optimizer, device, train: bool, snake_scan: bool) -> dict[str, float]:
     model.train(train)
-    totals = {"loss": 0.0, "dice": 0.0, "cldice": 0.0, "count": 0}
+    totals = {"loss": 0.0, "dice": 0.0, "cldice": 0.0, "betti_error": 0.0, "count": 0}
     for images, masks, _ in tqdm(loader, leave=False):
         images, masks = images.to(device), masks.to(device)
         with torch.set_grad_enabled(train):
@@ -67,8 +67,38 @@ def run_epoch(model, loader, criterion, optimizer, device, train: bool, snake_sc
         totals["loss"] += loss.item() * batch_size
         totals["dice"] += soft_dice(predictions, masks).item() * batch_size
         totals["cldice"] += cldice(predictions, masks, iterations=10).item() * batch_size
+        binary_predictions = (predictions.detach().cpu().numpy()[:, 0] >= 0.5)
+        binary_masks = (masks.detach().cpu().numpy()[:, 0] >= 0.5)
+        for prediction, target in zip(binary_predictions, binary_masks):
+            pred_betti = betti_numbers(prediction)
+            target_betti = betti_numbers(target)
+            totals["betti_error"] += abs(pred_betti[0] - target_betti[0]) + abs(pred_betti[1] - target_betti[1])
         totals["count"] += batch_size
     return {name: value / totals["count"] for name, value in totals.items() if name != "count"}
+
+
+def print_epoch_results(epoch: int, train_stats: dict[str, float], val_stats: dict[str, float], snake_scan: bool) -> None:
+    rows = [
+        ("Loss", "loss", ".6f"),
+        ("Dice", "dice", ".4f"),
+        ("clDice", "cldice", ".4f"),
+        ("Betti number error", "betti_error", ".4f"),
+    ]
+    table_rows = [(metric, format(train_stats[key], fmt), format(val_stats[key], fmt)) for metric, key, fmt in rows]
+    headers = ("Metric", "Train", "Validation")
+    widths = tuple(max(len(header), *(len(row[index]) for row in table_rows)) for index, header in enumerate(headers))
+    border = "+-" + "-+-".join("-" * width for width in widths) + "-+"
+
+    def format_row(row: tuple[str, ...]) -> str:
+        return "| " + " | ".join(value.ljust(width) for value, width in zip(row, widths)) + " |"
+
+    print(f"\nEpoch {epoch} | Snake scan: {'enabled' if snake_scan else 'disabled'}")
+    print(border)
+    print(format_row(headers))
+    print(border)
+    for row in table_rows:
+        print(format_row(row))
+    print(border)
 
 
 def main() -> None:
@@ -109,6 +139,8 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["training"]["learning_rate"], weight_decay=config["training"]["weight_decay"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config["training"]["epochs"])
     writer = SummaryWriter(output_dir / "tensorboard")
+    results_path = output_dir / "epoch_results.csv"
+    results_path.write_text("epoch,train_loss,train_dice,train_cldice,train_betti_error,val_loss,val_dice,val_cldice,val_betti_error\n", encoding="utf-8")
     best_metric = -float("inf")
     stale_epochs = 0
     warmup = config["model"]["snake_scan_warmup_epochs"]
@@ -121,6 +153,11 @@ def main() -> None:
         epoch_metrics.update({f"val/{key}": value for key, value in val_stats.items()})
         for name, value in epoch_metrics.items():
             writer.add_scalar(name, value, epoch)
+        with results_path.open("a", encoding="utf-8") as results_file:
+            results_file.write(
+                f"{epoch + 1},{train_stats['loss']},{train_stats['dice']},{train_stats['cldice']},{train_stats['betti_error']},"
+                f"{val_stats['loss']},{val_stats['dice']},{val_stats['cldice']},{val_stats['betti_error']}\n"
+            )
         writer.add_scalar("scan/snake_enabled", int(snake_scan), epoch)
         if val_stats["cldice"] > best_metric:
             best_metric = val_stats["cldice"]
@@ -130,7 +167,7 @@ def main() -> None:
             stale_epochs += 1
         if (epoch + 1) % config["training"]["gallery_every"] == 0:
             save_gallery(model, loaders["val"], device, output_dir / f"val_epoch_{epoch + 1:03d}.png", snake_scan)
-        print(f"epoch={epoch + 1} snake={snake_scan} train={train_stats} val={val_stats}")
+        print_epoch_results(epoch + 1, train_stats, val_stats, snake_scan)
         if stale_epochs >= config["training"]["patience"]:
             break
     writer.add_text("model", f"parameters={parameter_count(model)} backend={model.mamba_core.backend}")
