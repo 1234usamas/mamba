@@ -16,8 +16,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from mamba_crack.data import make_loaders
-from mamba_crack.losses import TopologyLoss, cldice, soft_dice
-from mamba_crack.metrics import betti_numbers
+from mamba_crack.losses import TopologyLoss
+from mamba_crack.metrics import batch_metrics
 from mamba_crack.model import MambaSegmenter, parameter_count
 
 
@@ -53,7 +53,8 @@ def save_gallery(model, loader, device, path: Path, snake_scan: bool) -> None:
 
 def run_epoch(model, loader, criterion, optimizer, device, train: bool, snake_scan: bool) -> dict[str, float]:
     model.train(train)
-    totals = {"loss": 0.0, "dice": 0.0, "cldice": 0.0, "betti_error": 0.0, "count": 0}
+    metric_names = ("accuracy", "iou", "dice", "cldice", "f1", "precision", "recall", "betti_error")
+    totals = {"loss": 0.0, **{name: 0.0 for name in metric_names}, "count": 0}
     for images, masks, _ in tqdm(loader, leave=False):
         images, masks = images.to(device), masks.to(device)
         with torch.set_grad_enabled(train):
@@ -65,14 +66,12 @@ def run_epoch(model, loader, criterion, optimizer, device, train: bool, snake_sc
                 optimizer.step()
         batch_size = images.shape[0]
         totals["loss"] += loss.item() * batch_size
-        totals["dice"] += soft_dice(predictions, masks).item() * batch_size
-        totals["cldice"] += cldice(predictions, masks, iterations=10).item() * batch_size
-        binary_predictions = (predictions.detach().cpu().numpy()[:, 0] >= 0.5)
-        binary_masks = (masks.detach().cpu().numpy()[:, 0] >= 0.5)
-        for prediction, target in zip(binary_predictions, binary_masks):
-            pred_betti = betti_numbers(prediction)
-            target_betti = betti_numbers(target)
-            totals["betti_error"] += abs(pred_betti[0] - target_betti[0]) + abs(pred_betti[1] - target_betti[1])
+        prediction_scores = predictions.detach().cpu().numpy()[:, 0]
+        binary_masks = masks.detach().cpu().numpy()[:, 0] >= 0.5
+        for prediction, target in zip(prediction_scores, binary_masks):
+            image_metrics = batch_metrics(prediction, target)
+            for name in metric_names:
+                totals[name] += image_metrics[name]
         totals["count"] += batch_size
     return {name: value / totals["count"] for name, value in totals.items() if name != "count"}
 
@@ -80,9 +79,14 @@ def run_epoch(model, loader, criterion, optimizer, device, train: bool, snake_sc
 def print_epoch_results(epoch: int, train_stats: dict[str, float], val_stats: dict[str, float], snake_scan: bool) -> None:
     rows = [
         ("Loss", "loss", ".6f"),
+        ("Accuracy", "accuracy", ".4f"),
+        ("IoU", "iou", ".4f"),
         ("Dice", "dice", ".4f"),
         ("clDice", "cldice", ".4f"),
-        ("Betti number error", "betti_error", ".4f"),
+        ("Crack F1-score", "f1", ".4f"),
+        ("Crack Precision", "precision", ".4f"),
+        ("Crack Recall", "recall", ".4f"),
+        ("Betti Error", "betti_error", ".4f"),
     ]
     table_rows = [(metric, format(train_stats[key], fmt), format(val_stats[key], fmt)) for metric, key, fmt in rows]
     headers = ("Metric", "Train", "Validation")
@@ -140,7 +144,9 @@ def main() -> None:
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config["training"]["epochs"])
     writer = SummaryWriter(output_dir / "tensorboard")
     results_path = output_dir / "epoch_results.csv"
-    results_path.write_text("epoch,train_loss,train_dice,train_cldice,train_betti_error,val_loss,val_dice,val_cldice,val_betti_error\n", encoding="utf-8")
+    result_names = ("loss", "accuracy", "iou", "dice", "cldice", "f1", "precision", "recall", "betti_error")
+    result_columns = [f"{split}_{name}" for split in ("train", "val") for name in result_names]
+    results_path.write_text("epoch," + ",".join(result_columns) + "\n", encoding="utf-8")
     best_metric = -float("inf")
     stale_epochs = 0
     warmup = config["model"]["snake_scan_warmup_epochs"]
@@ -154,10 +160,8 @@ def main() -> None:
         for name, value in epoch_metrics.items():
             writer.add_scalar(name, value, epoch)
         with results_path.open("a", encoding="utf-8") as results_file:
-            results_file.write(
-                f"{epoch + 1},{train_stats['loss']},{train_stats['dice']},{train_stats['cldice']},{train_stats['betti_error']},"
-                f"{val_stats['loss']},{val_stats['dice']},{val_stats['cldice']},{val_stats['betti_error']}\n"
-            )
+            row_values = [epoch + 1] + [stats[name] for stats in (train_stats, val_stats) for name in result_names]
+            results_file.write(",".join(map(str, row_values)) + "\n")
         writer.add_scalar("scan/snake_enabled", int(snake_scan), epoch)
         if val_stats["cldice"] > best_metric:
             best_metric = val_stats["cldice"]

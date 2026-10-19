@@ -47,7 +47,7 @@ under-crack-images/
 python train.py --config config.yaml
 ```
 
-The default configuration uses 512x512 images, batch size 8, AdamW, cosine annealing, up to 150 epochs, early stopping on validation clDice, a 12-epoch raster warmup, and TensorBoard logs. Each epoch prints loss, Dice, clDice, and Betti error for train and validation. These epoch metrics are also saved to `runs/mamba_segmenter/epoch_results.csv` and TensorBoard. The best checkpoint is written to `runs/mamba_segmenter/best.pt`.
+The default configuration uses 512x512 images, batch size 8, AdamW, cosine annealing, up to 150 epochs, early stopping on validation clDice, a 12-epoch raster warmup, and TensorBoard logs. Each epoch prints loss, accuracy, IoU, Dice, clDice, crack F1, crack precision, crack recall, and Betti error for train and validation. These epoch metrics are also saved to `runs/mamba_segmenter/epoch_results.csv` and TensorBoard. The best checkpoint is written to `runs/mamba_segmenter/best.pt`.
 
 ### Run on Google Colab GPU
 
