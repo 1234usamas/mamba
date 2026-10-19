@@ -1,0 +1,2 @@
+# Install this only on a CUDA development machine with nvcc available.
+mamba-ssm>=2.2

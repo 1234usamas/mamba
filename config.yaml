@@ -1,0 +1,32 @@
+seed: 42
+data:
+  root: under-crack-images
+  image_size: 512
+  train_fraction: 0.70
+  val_fraction: 0.15
+  test_fraction: 0.15
+  num_workers: 4
+  mean: [0.0, 0.0, 0.0]
+  std: [1.0, 1.0, 1.0]
+  compute_stats: true
+augmentation:
+  rotation: true
+  gain_min: 0.9
+  gain_max: 1.1
+model:
+  in_channels: 3
+  base_channels: 32
+  state_size: 16
+  snake_scan: true
+  snake_scan_warmup_epochs: 12
+  use_dsconv: true
+  use_cldice: true
+training:
+  epochs: 150
+  batch_size: 8
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 20
+  output_dir: runs/mamba_segmenter
+  log_every: 20
+  gallery_every: 10

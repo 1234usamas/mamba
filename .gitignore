@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+runs/
+under-crack-images/
+under-crack-images-processed/
+*.pt
+*.pth
+*.log
